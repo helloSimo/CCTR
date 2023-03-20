@@ -25,7 +25,7 @@ class TevatronTrainer(Trainer):
         super(TevatronTrainer, self).__init__(*args, **kwargs)
         self._dist_loss_scale_factor = dist.get_world_size() if self.args.negatives_x_device else 1
 
-    def _save(self, output_dir: Optional[str] = None):
+    def _save(self, output_dir: Optional[str] = None, state_dict=None):
         output_dir = output_dir if output_dir is not None else self.args.output_dir
         os.makedirs(output_dir, exist_ok=True)
         logger.info("Saving model checkpoint to %s", output_dir)
