@@ -1,110 +1,72 @@
 import os
-import warnings
-
 import torch
-from torch import nn, Tensor
-import torch.distributed as dist
-import torch.nn.functional as F
-from transformers import BertModel, BertConfig, AutoModel, AutoModelForMaskedLM, AutoConfig, PretrainedConfig, \
-    RobertaModel
-from transformers.models.bert.modeling_bert import BertPooler, BertOnlyMLMHead, BertPreTrainingHeads, BertLayer
-from transformers.modeling_outputs import SequenceClassifierOutput, BaseModelOutputWithPooling, MaskedLMOutput
-from transformers.models.roberta.modeling_roberta import RobertaLayer
+from torch import nn
+from transformers import BertConfig, AutoModel, PretrainedConfig, PreTrainedModel
+from transformers.models.bert.modeling_bert import BertLayer
+from transformers.modeling_outputs import BaseModelOutput
 
-from transformers import TrainingArguments
 import logging
 
 logger = logging.getLogger(__name__)
 
 
-class CondenserForPretraining(nn.Module):
+class Condenser(nn.Module):
     def __init__(
         self,
-        bert: BertModel,
-        n_head_layers: int,
+        lm: PreTrainedModel,
+        n_head_layers: int = 2,
     ):
-        super(CondenserForPretraining, self).__init__()
-        self.lm = bert
+        super(Condenser, self).__init__()
+        self.lm = lm
+        bert_config = BertConfig.from_pretrained('bert-base-uncased')
+        bert_config.max_position_embeddings = 13
         self.c_head = nn.ModuleList(
-            [BertLayer(bert.config) for _ in range(n_head_layers)]
+            [BertLayer(bert_config.config) for _ in range(n_head_layers)]
         )
         self.c_head.apply(self.lm._init_weights)
-        self.cross_entropy = nn.CrossEntropyLoss()
 
-    def forward(self, model_input, labels):
-        attention_mask = self.lm.get_extended_attention_mask(
-            model_input['attention_mask'],
-            model_input['attention_mask'].shape,
-            model_input['attention_mask'].device
-        )
-
-        lm_out: MaskedLMOutput = self.lm(
+    def forward(self, model_input):
+        lm_out: BaseModelOutput = self.lm(
             **model_input,
-            labels=labels,
             output_hidden_states=True,
             return_dict=True
         )
-        cls_hiddens = lm_out.hidden_states[-1][:, :1]
-        skip_hiddens = lm_out.hidden_states[self.model_args.skip_from]
-
-        hiddens = torch.cat([cls_hiddens, skip_hiddens[:, 1:]], dim=1)
+        cls_hiddens = torch.stack([i[:, 0, :] for i in lm_out.hidden_states], dim=1)
+        attention_mask = torch.ones(cls_hiddens.shape[:2], dtype=torch.int)
 
         for layer in self.c_head:
             layer_out = layer(
-                hiddens,
+                cls_hiddens,
                 attention_mask,
             )
-            hiddens = layer_out[0]
+            cls_hiddens = layer_out[0]
 
-        loss = self.mlm_loss(hiddens, labels)
-        if self.model_args.late_mlm:
-            loss += lm_out.loss
-
-        return loss
-
-
-    def mlm_loss(self, hiddens, labels):
-        pred_scores = self.lm.cls(hiddens)
-        masked_lm_loss = self.cross_entropy(
-            pred_scores.view(-1, self.lm.config.vocab_size),
-            labels.view(-1)
-        )
-        return masked_lm_loss
-
+        return cls_hiddens[:, 0]
 
     @classmethod
     def from_pretrained(
-            cls, model_args: ModelArguments, data_args: DataTrainingArguments, train_args: TrainingArguments,
-            *args, **kwargs
+            cls, n_head_layers, *args, **kwargs
     ):
-        hf_model = AutoModelForMaskedLM.from_pretrained(*args, **kwargs)
-        model = cls(hf_model, model_args, data_args, train_args)
+        hf_model = AutoModel.from_pretrained(*args, **kwargs)
+        model = cls(hf_model, n_head_layers)
         path = args[0]
-        if os.path.exists(os.path.join(path, 'model.pt')):
+        if os.path.exists(os.path.join(path, 'head.pt')):
             logger.info('loading extra weights from local files')
-            model_dict = torch.load(os.path.join(path, 'model.pt'), map_location="cpu")
-            load_result = model.load_state_dict(model_dict, strict=False)
+            model_dict = torch.load(os.path.join(path, 'head.pt'), map_location="cpu")
+            model.c_head.load_state_dict(model_dict)
         return model
 
     @classmethod
     def from_config(
             cls,
-            config: PretrainedConfig,
-            model_args: ModelArguments,
-            data_args: DataTrainingArguments,
-            train_args: TrainingArguments,
+            config: PretrainedConfig, n_head_layers
     ):
-        hf_model = AutoModelForMaskedLM.from_config(config)
-        model = cls(hf_model, model_args, data_args, train_args)
+        hf_model = AutoModel.from_config(config)
+        model = cls(hf_model,  n_head_layers)
 
         return model
 
     def save_pretrained(self, output_dir: str):
         self.lm.save_pretrained(output_dir)
-        model_dict = self.state_dict()
-        hf_weight_keys = [k for k in model_dict.keys() if k.startswith('lm')]
-        warnings.warn(f'omiting {len(hf_weight_keys)} transformer weights')
-        for k in hf_weight_keys:
-            model_dict.pop(k)
-        torch.save(model_dict, os.path.join(output_dir, 'model.pt'))
-        torch.save([self.data_args, self.model_args, self.train_args], os.path.join(output_dir, 'args.pt'))
+        model_dict = self.c_head.state_dict()
+        torch.save(model_dict, os.path.join(output_dir, 'head.pt'))

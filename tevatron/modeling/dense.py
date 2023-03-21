@@ -20,9 +20,9 @@ class DensePooler(EncoderPooler):
 
     def forward(self, q: Tensor = None, p: Tensor = None, **kwargs):
         if q is not None:
-            rep = self.linear_q(q[:, 0])
+            rep = self.linear_q(q)
         elif p is not None:
-            rep =  self.linear_p(p[:, 0])
+            rep = self.linear_p(p)
         else:
             raise ValueError
         if self.normalize:
@@ -34,24 +34,18 @@ class DenseModel(EncoderModel):
     def encode_passage(self, psg):
         if psg is None:
             return None
-        psg_out = self.lm_p(**psg, return_dict=True)
-        p_hidden = psg_out.last_hidden_state
+        psg_out = self.lm_p(**psg)
         if self.pooler is not None:
-            p_reps = self.pooler(p=p_hidden)  # D * d
-        else:
-            p_reps = p_hidden[:, 0]
-        return p_reps
+            psg_out = self.pooler(p=psg_out)  # D * d
+        return psg_out
 
     def encode_query(self, qry):
         if qry is None:
             return None
-        qry_out = self.lm_q(**qry, return_dict=True)
-        q_hidden = qry_out.last_hidden_state
+        qry_out = self.lm_q(**qry)
         if self.pooler is not None:
-            q_reps = self.pooler(q=q_hidden)
-        else:
-            q_reps = q_hidden[:, 0]
-        return q_reps
+            qry_out = self.pooler(q=qry_out)
+        return qry_out
 
     def compute_similarity(self, q_reps, p_reps):
         return torch.matmul(q_reps, p_reps.transpose(0, 1))

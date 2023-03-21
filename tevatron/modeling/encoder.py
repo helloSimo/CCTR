@@ -15,6 +15,8 @@ from tevatron.arguments import ModelArguments, \
 
 import logging
 
+from tevatron.modeling.condenser import Condenser
+
 logger = logging.getLogger(__name__)
 
 
@@ -55,8 +57,8 @@ class EncoderModel(nn.Module):
     TRANSFORMER_CLS = AutoModel
 
     def __init__(self,
-                 lm_q: PreTrainedModel,
-                 lm_p: PreTrainedModel,
+                 lm_q: Condenser,
+                 lm_p: Condenser,
                  pooler: nn.Module = None,
                  untie_encoder: bool = False,
                  negatives_x_device: bool = False
