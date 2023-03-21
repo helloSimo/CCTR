@@ -34,7 +34,7 @@ class DenseModel(EncoderModel):
     def encode_passage(self, psg):
         if psg is None:
             return None
-        psg_out = self.lm_p(**psg)
+        psg_out = self.lm_p(psg)
         if self.pooler is not None:
             psg_out = self.pooler(p=psg_out)  # D * d
         return psg_out
@@ -42,7 +42,7 @@ class DenseModel(EncoderModel):
     def encode_query(self, qry):
         if qry is None:
             return None
-        qry_out = self.lm_q(**qry)
+        qry_out = self.lm_q(qry)
         if self.pooler is not None:
             qry_out = self.pooler(q=qry_out)
         return qry_out

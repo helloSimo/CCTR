@@ -7,7 +7,6 @@ from typing import Dict, Optional
 import torch
 from torch import nn, Tensor
 import torch.distributed as dist
-from transformers import PreTrainedModel, AutoModel
 from transformers.file_utils import ModelOutput
 
 from tevatron.arguments import ModelArguments, \
@@ -54,7 +53,7 @@ class EncoderPooler(nn.Module):
 
 
 class EncoderModel(nn.Module):
-    TRANSFORMER_CLS = AutoModel
+    TRANSFORMER_CLS = Condenser
 
     def __init__(self,
                  lm_q: Condenser,
