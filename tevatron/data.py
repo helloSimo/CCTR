@@ -29,17 +29,6 @@ class TrainDataset(Dataset):
         self.data_args = data_args
         self.total_len = len(self.train_data)
 
-    def create_one_example(self, text_encoding: List[int], is_query=False):
-        item = self.tok.prepare_for_model(
-            text_encoding,
-            truncation='only_first',
-            max_length=self.data_args.q_max_len if is_query else self.data_args.p_max_len,
-            padding=False,
-            return_attention_mask=False,
-            return_token_type_ids=False,
-        )
-        return item
-
     def __len__(self):
         return self.total_len
 
@@ -49,10 +38,7 @@ class TrainDataset(Dataset):
 
         _hashed_seed = hash(item + self.trainer.args.seed)
 
-        qry = group['query']
-        encoded_query = self.create_one_example(qry, is_query=True)
-
-        encoded_passages = []
+        passages = []
         group_positives = group['positives']
         group_negatives = group['negatives']
 
@@ -60,7 +46,7 @@ class TrainDataset(Dataset):
             pos_psg = group_positives[0]
         else:
             pos_psg = group_positives[(_hashed_seed + epoch) % len(group_positives)]
-        encoded_passages.append(self.create_one_example(pos_psg))
+        passages.append(pos_psg)
 
         negative_size = self.data_args.train_n_passages - 1
         if len(group_negatives) < negative_size:
@@ -77,9 +63,9 @@ class TrainDataset(Dataset):
             negs = negs[_offset: _offset + negative_size]
 
         for neg_psg in negs:
-            encoded_passages.append(self.create_one_example(neg_psg))
+            passages.append(neg_psg)
 
-        return encoded_query, encoded_passages
+        return group['query'], passages
 
 
 class EncodeDataset(Dataset):
@@ -95,23 +81,17 @@ class EncodeDataset(Dataset):
 
     def __getitem__(self, item) -> Tuple[str, BatchEncoding]:
         text_id, text = (self.encode_data[item][f] for f in self.input_keys)
-        encoded_text = self.tok.prepare_for_model(
-            text,
-            max_length=self.max_len,
-            truncation='only_first',
-            padding=False,
-            return_token_type_ids=False,
-        )
-        return text_id, encoded_text
+        return text_id, text
 
 
 @dataclass
-class QPCollator(DataCollatorWithPadding):
+class QPCollator:
     """
     Wrapper that does conversion from List[Tuple[encode_qry, encode_psg]] to List[qry], List[psg]
     and pass batch separately to the actual collator.
     Abstract out data detail for the model.
     """
+    tokenizer: PreTrainedTokenizer
     max_q_len: int = 32
     max_p_len: int = 128
 
@@ -124,16 +104,18 @@ class QPCollator(DataCollatorWithPadding):
         if isinstance(dd[0], list):
             dd = sum(dd, [])
 
-        q_collated = self.tokenizer.pad(
+        q_collated = self.tokenizer(
             qq,
             padding='max_length',
             max_length=self.max_q_len,
+            truncation='only_first',
             return_tensors="pt",
         )
-        d_collated = self.tokenizer.pad(
+        d_collated = self.tokenizer(
             dd,
             padding='max_length',
             max_length=self.max_p_len,
+            truncation='only_first',
             return_tensors="pt",
         )
 
@@ -141,9 +123,18 @@ class QPCollator(DataCollatorWithPadding):
 
 
 @dataclass
-class EncodeCollator(DataCollatorWithPadding):
+class EncodeCollator:
+    max_len: int
+    tokenizer: PreTrainedTokenizer
+
     def __call__(self, features):
         text_ids = [x[0] for x in features]
         text_features = [x[1] for x in features]
-        collated_features = super().__call__(text_features)
+        collated_features = self.tokenizer(
+            text_features,
+            padding='max_length',
+            truncation='only_first',
+            max_length=self.max_len,
+            return_tensors="pt",
+        )
         return text_ids, collated_features

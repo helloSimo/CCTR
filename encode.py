@@ -57,7 +57,7 @@ def main():
 
     text_max_length = data_args.q_max_len if data_args.encode_is_qry else data_args.p_max_len
     if data_args.encode_is_qry:
-        encode_dataset = HFQueryDataset(tokenizer=tokenizer, data_args=data_args,
+        encode_dataset = HFQueryDataset(data_args=data_args,
                                         cache_dir=data_args.data_cache_dir or model_args.cache_dir)
     else:
         encode_dataset = HFCorpusDataset(tokenizer=tokenizer, data_args=data_args,
@@ -69,9 +69,8 @@ def main():
         encode_dataset,
         batch_size=training_args.per_device_eval_batch_size,
         collate_fn=EncodeCollator(
-            tokenizer,
-            max_length=text_max_length,
-            padding='max_length'
+            max_len=text_max_length,
+            tokenizer=tokenizer,
         ),
         shuffle=False,
         drop_last=False,

@@ -27,9 +27,6 @@ class HFTrainDataset:
         self.preprocessor = PROCESSOR_INFO[data_args.dataset_name][0] if data_args.dataset_name in PROCESSOR_INFO\
             else DEFAULT_PROCESSORS[0]
         self.tokenizer = tokenizer
-        self.q_max_len = data_args.q_max_len
-        self.p_max_len = data_args.p_max_len
-        self.proc_num = data_args.dataset_proc_num
         self.neg_num = data_args.train_n_passages - 1
         self.separator = getattr(self.tokenizer, data_args.passage_field_separator, data_args.passage_field_separator)
 
@@ -37,9 +34,8 @@ class HFTrainDataset:
         self.dataset = self.dataset.shard(shard_num, shard_idx)
         if self.preprocessor is not None:
             self.dataset = self.dataset.map(
-                self.preprocessor(self.tokenizer, self.q_max_len, self.p_max_len, self.separator),
+                self.preprocessor(self.separator),
                 batched=False,
-                num_proc=self.proc_num,
                 remove_columns=self.dataset.column_names,
                 desc="Running tokenizer on train dataset",
             )
@@ -47,7 +43,7 @@ class HFTrainDataset:
 
 
 class HFQueryDataset:
-    def __init__(self, tokenizer: PreTrainedTokenizer, data_args: DataArguments, cache_dir: str):
+    def __init__(self, data_args: DataArguments, cache_dir: str):
         data_files = data_args.encode_in_path
         if data_files:
             data_files = {data_args.dataset_split: data_files}
@@ -56,17 +52,13 @@ class HFQueryDataset:
                                     data_files=data_files, cache_dir=cache_dir, use_auth_token=True)[data_args.dataset_split]
         self.preprocessor = PROCESSOR_INFO[data_args.dataset_name][1] if data_args.dataset_name in PROCESSOR_INFO \
             else DEFAULT_PROCESSORS[1]
-        self.tokenizer = tokenizer
-        self.q_max_len = data_args.q_max_len
-        self.proc_num = data_args.dataset_proc_num
 
     def process(self, shard_num=1, shard_idx=0):
         self.dataset = self.dataset.shard(shard_num, shard_idx)
         if self.preprocessor is not None:
             self.dataset = self.dataset.map(
-                self.preprocessor(self.tokenizer, self.q_max_len),
+                self.preprocessor(),
                 batched=False,
-                num_proc=self.proc_num,
                 remove_columns=self.dataset.column_names,
                 desc="Running tokenization",
             )
@@ -87,17 +79,14 @@ class HFCorpusDataset:
         self.preprocessor = PROCESSOR_INFO[script_prefix][2] \
             if script_prefix in PROCESSOR_INFO else DEFAULT_PROCESSORS[2]
         self.tokenizer = tokenizer
-        self.p_max_len = data_args.p_max_len
-        self.proc_num = data_args.dataset_proc_num
         self.separator = getattr(self.tokenizer, data_args.passage_field_separator, data_args.passage_field_separator)
 
     def process(self, shard_num=1, shard_idx=0):
         self.dataset = self.dataset.shard(shard_num, shard_idx)
         if self.preprocessor is not None:
             self.dataset = self.dataset.map(
-                self.preprocessor(self.tokenizer, self.p_max_len, self.separator),
+                self.preprocessor(),
                 batched=False,
-                num_proc=self.proc_num,
                 remove_columns=self.dataset.column_names,
                 desc="Running tokenization",
             )
