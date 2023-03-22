@@ -2,7 +2,6 @@ import os
 import torch
 from torch import nn
 from transformers import BertConfig, AutoModel, PretrainedConfig, PreTrainedModel
-from transformers.models.bert.modeling_bert import BertLayer
 from transformers.modeling_outputs import BaseModelOutput
 
 import logging
@@ -20,10 +19,7 @@ class Condenser(nn.Module):
         self.lm = lm
         bert_config = BertConfig.from_pretrained('bert-base-uncased')
         bert_config.max_position_embeddings = 13
-        self.c_head = nn.ModuleList(
-            [BertLayer(bert_config) for _ in range(N_HEAD_LAYERS)]
-        )
-        self.c_head.apply(self.lm._init_weights)
+        self.c_head = nn.Linear(768, 384)
 
     def forward(self, model_input):
         lm_out: BaseModelOutput = self.lm(
@@ -31,19 +27,11 @@ class Condenser(nn.Module):
             output_hidden_states=True,
             return_dict=True
         )
-        cls_hiddens = torch.stack([i[:, 0, :] for i in lm_out.hidden_states], dim=1)
-        attention_mask = torch.ones(cls_hiddens.shape[:2], dtype=torch.int)
-        attention_mask = self.lm.get_extended_attention_mask(attention_mask=attention_mask,
-                                                             input_shape=cls_hiddens.shape)
+        cls_hidden_1 = self.c_head(lm_out.hidden_states[6][:, 0, :])
+        cls_hidden_2 = self.c_head(lm_out.hidden_states[12][:, 0, :])
+        cls_hidden = torch.concat([cls_hidden_1, cls_hidden_2], dim=1)
 
-        for layer in self.c_head:
-            layer_out = layer(
-                cls_hiddens,
-                attention_mask.to(model_input['attention_mask'].device),
-            )
-            cls_hiddens = layer_out[0]
-
-        return cls_hiddens[:, 0]
+        return cls_hidden
 
     @classmethod
     def from_pretrained(
