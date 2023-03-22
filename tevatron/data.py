@@ -3,14 +3,15 @@ from dataclasses import dataclass
 from typing import List, Tuple
 
 import datasets
+from datasets import load_dataset
 from torch.utils.data import Dataset
 from transformers import PreTrainedTokenizer, BatchEncoding, DataCollatorWithPadding
-
 
 from .arguments import DataArguments
 from .trainer import TevatronTrainer
 
 import logging
+
 logger = logging.getLogger(__name__)
 
 
@@ -18,11 +19,17 @@ class TrainDataset(Dataset):
     def __init__(
             self,
             data_args: DataArguments,
-            dataset: datasets.Dataset,
             tokenizer: PreTrainedTokenizer,
+            cache_dir: str,
             trainer: TevatronTrainer = None,
     ):
-        self.train_data = dataset
+        data_files = data_args.train_path
+        if data_files:
+            data_files = {data_args.dataset_split: data_files}
+        self.train_data = load_dataset(data_args.dataset_name,
+                                       data_args.dataset_language,
+                                       data_files=data_files,
+                                       cache_dir=cache_dir)[data_args.dataset_split]
         self.tok = tokenizer
         self.trainer = trainer
 
@@ -39,13 +46,17 @@ class TrainDataset(Dataset):
         _hashed_seed = hash(item + self.trainer.args.seed)
 
         passages = []
-        group_positives = group['positives']
-        group_negatives = group['negatives']
+        group_positives = group['positive_passages']
+        group_negatives = group['negative_passages']
 
         if self.data_args.positive_passage_no_shuffle:
             pos_psg = group_positives[0]
         else:
             pos_psg = group_positives[(_hashed_seed + epoch) % len(group_positives)]
+        if 'title' in pos_psg:
+            pos_psg = pos_psg['title'] + self.data_args.passage_field_separator + pos_psg['text']
+        else:
+            pos_psg = pos_psg['text']
         passages.append(pos_psg)
 
         negative_size = self.data_args.train_n_passages - 1
@@ -63,25 +74,58 @@ class TrainDataset(Dataset):
             negs = negs[_offset: _offset + negative_size]
 
         for neg_psg in negs:
+            if 'title' in neg_psg:
+                neg_psg = neg_psg['title'] + self.data_args.passage_field_separator + neg_psg['text']
+            else:
+                neg_psg = neg_psg['text']
             passages.append(neg_psg)
 
         return group['query'], passages
 
 
-class EncodeDataset(Dataset):
-    input_keys = ['text_id', 'text']
-
-    def __init__(self, dataset: datasets.Dataset, tokenizer: PreTrainedTokenizer, max_len=128):
-        self.encode_data = dataset
-        self.tok = tokenizer
-        self.max_len = max_len
+class QueryDataset(Dataset):
+    def __init__(self, data_args: DataArguments, cache_dir: str):
+        data_files = data_args.encode_in_path
+        if data_files:
+            data_files = {data_args.dataset_split: data_files}
+        dataset = load_dataset(data_args.dataset_name,
+                               data_args.dataset_language,
+                               data_files=data_files,
+                               cache_dir=cache_dir)[data_args.dataset_split]
+        self.dataset = dataset.shard(data_args.encode_num_shard,
+                                     data_args.encode_shard_index)
 
     def __len__(self):
-        return len(self.encode_data)
+        return len(self.dataset)
 
-    def __getitem__(self, item) -> Tuple[str, BatchEncoding]:
-        text_id, text = (self.encode_data[item][f] for f in self.input_keys)
-        return text_id, text
+    def __getitem__(self, item) -> Tuple[str, List[str]]:
+        example = self.dataset[item]
+        return example['query_id'], example['query']
+
+
+class CorpusDataset(Dataset):
+    def __init__(self, data_args: DataArguments, cache_dir: str):
+        data_files = data_args.encode_in_path
+        if data_files:
+            data_files = {data_args.dataset_split: data_files}
+        dataset = load_dataset(data_args.dataset_name,
+                               data_args.dataset_language,
+                               data_files=data_files,
+                               cache_dir=cache_dir)[data_args.dataset_split]
+        self.dataset = dataset.shard(data_args.encode_num_shard,
+                                     data_args.encode_shard_index)
+        self.separator = data_args.passage_field_separator
+
+    def __len__(self):
+        return len(self.dataset)
+
+    def __getitem__(self, item) -> Tuple[str, List[str]]:
+        example = self.dataset[item]
+        if 'title' in example:
+            text = example['title'] + self.separator + example['text']
+        else:
+            text = example['text']
+        return example['docid'], text
 
 
 @dataclass
